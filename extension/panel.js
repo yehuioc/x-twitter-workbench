@@ -1,0 +1,11 @@
+const $=id=>document.getElementById(id);let view;
+async function call(action,args={}){const r=await chrome.runtime.sendMessage({action,args});if(!r||r.error)throw Error(r?.error||'扩展后台未响应');return r.result;}
+function render(s){view=s;const b=s.binding;$('binding').textContent=b?'@'+b.account+'\n'+b.url+'\n'+(b.control?'AI 接管开启':'由你操作'): '尚未绑定';$('control').checked=!!b?.control;$('status').textContent=s.message;$('version').textContent='扩展 '+s.version+' · '+(s.connected?'本机在线':'本机待连接');for(const id of ['focus','capture','list','sync'])$(id).disabled=!b||s.busy;$('bind').disabled=s.busy;$('control').disabled=!b||s.busy;}
+function action(id,fn){$(id).onclick=async()=>{try{await fn();}catch(e){$('status').textContent=e.message;}};}
+action('pair',async()=>{render(await call('pair',{code:$('code').value}));$('code').value='';});
+action('bind',async()=>render(await call('bind')));action('focus',async()=>render(await call('focus')));action('stop',async()=>render(await call('stop')));
+$('control').onchange=async()=>{try{render(await call('control',{enabled:$('control').checked}));}catch(e){$('control').checked=!!view?.binding?.control;$('status').textContent=e.message;}};
+action('capture',async()=>{await call('capture',{thread:$('thread').checked});$('status').textContent='已保存，可在本地资料库核对覆盖说明。';});
+action('sync',async()=>{$('status').textContent='已同步 '+(await call('sync')).synced+' 条待存记录。';});
+action('list',async()=>{const r=await call('list');$('cards').replaceChildren();for(const p of r.cards){const card=document.createElement('article'),text=document.createElement('p'),button=document.createElement('button');text.textContent='@'+(p.author.handle||'未知作者')+' · '+p.text;button.textContent='保存此帖';button.onclick=async()=>{button.disabled=true;try{await call('capture_post',{id:p.id,thread:$('thread').checked});button.textContent='已保存';}catch(e){$('status').textContent=e.message;}finally{button.disabled=false;}};card.append(text,button);$('cards').append(card);}});
+chrome.runtime.connect({name:'xwb-panel'}).onMessage.addListener(render);call('state').then(render).catch(e=>$('status').textContent=e.message);

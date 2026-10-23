@@ -1,0 +1,6 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>X 资料侧栏</title><link rel="stylesheet" href="panel.css"><body>
+<h1>X 资料工作台</h1><p>把当前阅读留在本地，需要时再开启 AI。</p><p id="status" role="status"></p>
+<section><label>工作台配对码<input id="code" autocomplete="off" placeholder="从本机工作台取得"></label><button id="pair">连接工作台</button><button id="bind">绑定我当前看到的 X 页</button><pre id="binding">尚未绑定</pre><button id="focus">定位绑定页面</button></section>
+<section><label><input type="checkbox" id="control">允许 AI 操作这个标签页</label><button id="stop" class="stop">立即停止 AI</button><p>同账号正常跳转保留接管；侧栏关闭仍继续。服务离线、账号变化或平台验证时暂停。</p></section>
+<section><label><input type="checkbox" id="thread">同时收集明确关系的同作者续帖</label><button id="capture">保存当前帖子</button><button id="sync">同步待存记录</button><button id="list">查看当前已加载帖子</button><p>未展开、未加载、缺图和线程缺口会保留说明。</p><div id="cards"></div></section>
+<a href="http://127.0.0.1:8915/" target="_blank" rel="noopener noreferrer">打开本地资料工作台 ↗</a><p id="version"></p><script src="panel.js"></script></body></html>
