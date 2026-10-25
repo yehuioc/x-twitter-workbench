@@ -8,7 +8,7 @@ import time
 import uuid
 from .store import Problem
 
-ACTIONS={'identity','snapshot','search','open_post','read_post','read_thread','scroll'}
+ACTIONS={'identity','snapshot','search','open_post','read_post','read_thread','scroll','bookmarks'}
 class Bridge:
     def __init__(self, store):
         self.store=store; self.cv=threading.Condition(); self.clients={}; self.commands={}; self.pairing=None

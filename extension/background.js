@@ -59,6 +59,17 @@ async function execute(action,args={}){
   await identity();
   if(action==='identity')return page('identity');
   if(action==='snapshot')return page('snapshot');
+  if(action==='bookmarks'){
+    const mode=args.mode||'open';if(!['open','current','scroll'].includes(mode))throw Error('书签读取方式无效');
+    const current=await check(run.session);
+    if(mode==='open'){
+      if(!/^https:\/\/(x|twitter)\.com\/i\/bookmarks\/?$/.test(current.url)||args.reset===true)await navigate('https://x.com/i/bookmarks');
+    }else if(!/^https:\/\/(x|twitter)\.com\/i\/bookmarks\/?$/.test(current.url))throw Error('书签页位置已变化，保留进度并停止');
+    if(mode==='scroll'){await page('scroll',{direction:'down'});await sleep(700);}
+    let previous='';const result=await until(async()=>{const r=await page('bookmarks');if(!r.account||r.account!==binding.account)throw Error('书签账号不一致');if(!r.root_ids?.length&&!r.empty)return false;const signature=JSON.stringify([r.root_ids,r.posts.map(p=>p.text)]);if(signature!==previous){previous=signature;return false;}return r;});
+    const skip=Array.isArray(args.skip_ids)?new Set(args.skip_ids.filter(validId).slice(0,1000)):new Set();
+    if(args.metadata_only!==true)await imageData(result.posts.filter(p=>!skip.has(p.id)));return result;
+  }
   if(action==='scroll'){await page('scroll',args);await sleep(500);return page('snapshot');}
   if(action==='search'){if(typeof args.keyword!=='string'||!args.keyword.trim()||args.keyword.length>200)throw Error('查询无效');const u=new URL('https://x.com/search');u.searchParams.set('q',args.keyword);u.searchParams.set('f','live');await navigate(u.href);return until(async()=>{const r=await page('snapshot');const actual=new URL(r.url);return actual.pathname==='/search'&&actual.searchParams.get('q')===args.keyword&&(r.cards.length||r.empty)?r:false;});}
   if(!['open_post','read_post','read_thread'].includes(action)||!validId(args.id))throw Error('未开放此动作或帖子 ID 无效');
@@ -114,6 +125,10 @@ async function handle(action,args={}){await init();if(action==='state')return st
   if(action==='control'){if(!args.enabled)return handle('stop');if(active)throw Error('请等待当前动作结束');await identity();binding={...binding,control:true,grant_at:Date.now()/1000,session:crypto.randomUUID(),revision:binding.revision+1};lastTick=Date.now();await chrome.tabs.update(binding.tab_id,{autoDiscardable:false});await persist();await chrome.alarms.create('xwb-wake',{periodInMinutes:1});message='AI 接管开启；切页、最小化或关闭侧栏仍由后台执行。';schedule(0);show();return state();}
   if(action==='focus'){const t=await chrome.tabs.get(binding.tab_id);await chrome.tabs.update(t.id,{active:true});await chrome.windows.update(t.windowId,{focused:true});return state();}
   if(action==='list')return job('snapshot',{});
+  if(action==='bookmarks'){
+    if(binding.control)throw Error('批量接管中请使用工作台书签同步；手动保存前先停止 AI');
+    return job('bookmarks',{},null,async()=>{const result=await execute('bookmarks',{mode:'open'});await post('/bridge/poll',{binding,busy:true});const saved=await post('/bridge/capture',{...result,binding});message='已保存当前加载的书签；更多历史可在工作台继续同步。';show();return saved;});
+  }
   if(action==='capture_post')return capture(args.id,args.thread===true);
   if(action==='capture'){const t=await check(binding.session),id=t.url.match(/\/status\/(\d+)/)?.[1];return capture(id,args.thread===true);}
   if(action==='sync'){await identity();await post('/bridge/poll',{binding,busy:false});const entries=(await chrome.storage.local.get('outbox')).outbox||[];let count=0;while(entries.length){if(entries[0].account!==binding.account)throw Error('待存记录属于另一账号，请先绑定对应账号');await post('/bridge/capture',{...entries[0].result,binding});entries.shift();count++;await chrome.storage.local.set({outbox:entries});}return {synced:count};}

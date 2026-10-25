@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs, unquote
 from .store import Store, Problem, ROOT, HOME, dumps
 from .engine import Engine
+from . import bookmarks
 
 def extension_archive():
     output=io.BytesIO()
@@ -83,7 +84,7 @@ def make_server(store=None,port=8915):
                     if not state['unchanged']:
                         state['installation']={'extension_dir':str(ROOT/'extension'),'mcp_command':'python -X utf8 -B "'+ROOT.as_posix()+'/run_x.py" mcp'}
                     return self.send(state)
-                if path=='/api/library': return self.send(engine.store.search(q.get('q',[''])[0],q.get('tag',[''])[0],q.get('offset',[0])[0],brief=True))
+                if path=='/api/library': return self.send(engine.store.search(q.get('q',[''])[0],q.get('tag',[''])[0],q.get('offset',[0])[0],brief=True,collection=q.get('collection',[''])[0],owner=q.get('owner',[''])[0]))
                 if path=='/api/post': return self.send(engine.store.get(q['id'][0],q.get('revision',[None])[0]))
                 if path=='/api/task': return self.send(engine.store.task(q['id'][0]))
                 if path=='/api/packet': return self.send(engine.packet(q['id'][0]))
@@ -114,7 +115,8 @@ def make_server(store=None,port=8915):
                         if path=='/bridge/poll': result=engine.bridge.poll(key,body)
                         elif path=='/bridge/result': result=engine.bridge.result(key,body)
                         elif path=='/bridge/capture':
-                            engine.bridge.check_capture(key,body.get('binding',{})); result=engine.save(body)
+                            engine.bridge.check_capture(key,body.get('binding',{}))
+                            result=bookmarks.save_view(engine,body,body['binding']['account']) if 'root_ids' in body else engine.save(body)
                         else: raise Problem('扩展接口不存在')
                 else:
                     self.local(); body=self.body()

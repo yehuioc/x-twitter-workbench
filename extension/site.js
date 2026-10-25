@@ -9,8 +9,9 @@ function xNormalizeTweet(t) {
   if(l.in_reply_to_status_id_str)relations.push({type:'reply_to',target:String(l.in_reply_to_status_id_str),evidence:'page_post_fields'});
   const quote=t.quoted_status_result?.result||t.quoted_status, qid=quote?.rest_id||quote?.id_str||l.quoted_status_id_str;
   if(qid)relations.push({type:'quotes',target:String(qid),evidence:'page_post_fields'});
+  const links=[...new Set([...(l.entities?.urls||[]),...((note?.entity_set||note?.entities)?.urls||[])].map(x=>x.expanded_url||x.url).filter(Boolean))];
   return {id:String(t.rest_id||l.id_str),text:full,author:{id:String(user?.rest_id||user?.id_str||l.user_id_str||''),handle,name:ul.name||uc.name||''},
-    published_at:l.created_at||null,lang:l.lang||null,relations,links:(l.entities?.urls||[]).map(x=>x.expanded_url||x.url),
+    published_at:l.created_at||null,lang:l.lang||null,relations,links,
     media:(l.extended_entities?.media||l.entities?.media||[]).filter(x=>x.type==='photo').map(x=>({url:x.media_url_https,alt:x.ext_alt_text||''})),
     coverage:{text_complete:!!note?.text||l.truncated===false&&!t.note_tweet,method:'page_post_fields',thread:'not_collected',video:'链接与封面以外未保存'},
     metrics:{likes:l.favorite_count,replies:l.reply_count,reposts:l.retweet_count},extraction:{structured:true,note_tweet:!!note?.text},_quote:quote};
@@ -90,6 +91,16 @@ function xDraftState(){
   }
   return {has_draft:[...fields].some(e=>(e.value||e.innerText||'').trim()),diagnostics:candidates.map(e=>({test_id:e.getAttribute('data-testid'),tag:e.tagName,editable:e.getAttribute('contenteditable'),text_length:(e.innerText||'').trim().length,value_length:(e.value||'').trim().length})),editable_fields:fields.size};
 }
+function xBookmarkView(){
+  if(!/^\/i\/bookmarks\/?$/.test(location.pathname))throw Error('请打开全部书签页；文件夹、搜索和推荐内容不能当成全部书签');
+  const column=document.querySelector('[data-testid="primaryColumn"]')||document.querySelector('main');
+  const roots=[...(column?.querySelectorAll('article[data-testid="tweet"]')||[])].map(xReadArticle).filter(Boolean),posts=new Map();
+  for(const post of roots){
+    const quoted=post._quote&&xNormalizeTweet(post._quote);delete post._quote;posts.set(post.id,post);
+    if(quoted){delete quoted._quote;quoted.observed_at=post.observed_at;quoted.url='https://x.com/i/status/'+quoted.id;posts.set(quoted.id,quoted);}
+  }
+  return {adapter_version:'0.3.0',account:xPageIdentity()?.account||'',url:location.href,root_ids:roots.map(p=>p.id),posts:[...posts.values()],empty:!roots.length&&!!column?.querySelector('[data-testid="emptyState"]'),loading:!!column?.querySelector('[role="progressbar"]'),unavailable:column?.querySelectorAll('[data-testid="tombstone"]').length||0,position:{y:scrollY},scope:'当前全部书签页已加载部分；不代表全部历史书签'};
+}
 async function xPageAction(action,args={}) {
   if(!['x.com','twitter.com'].includes(location.hostname))throw Error('绑定页已离开 X');
   let dialogs=[...document.querySelectorAll('[role="dialog"],[data-testid="error-detail"],[data-testid="toast"]')].map(x=>x.innerText||'').join('\n');
@@ -105,6 +116,7 @@ async function xPageAction(action,args={}) {
   }
   if(action==='position')return {url:location.href,y:scrollY};
   if(action==='restore_scroll'){window.scrollTo({top:Math.max(0,Math.min(10000000,Number(args.y)||0)),behavior:'instant'});return {restored:true};}
+  if(action==='bookmarks')return xBookmarkView();
   const articles=[...document.querySelectorAll('article[data-testid="tweet"]')];
   if(action==='snapshot')return {adapter_version:'0.2.0',navigation_guard:xDraftState(),button_style:!!document.getElementById('xwb-action-style'),button_runtime:{version:document.documentElement.dataset.xwbUiVersion,error:document.documentElement.dataset.xwbUiError},cards:articles.map(xReadArticle).filter(Boolean).map(p=>({id:p.id,text:p.text.slice(0,240),author:p.author,url:p.url})),url:location.href,empty:!articles.length&&!!document.querySelector('[data-testid="emptyState"]'),scope:'当前已加载列表，尚未精读',save_buttons:articles.slice(0,10).map(a=>{const b=a.querySelector('button[data-xwb-save]'),r=b?.closest('[role="group"]');return {id:xArticleId(a),present:!!b,in_action_row:!!r&&!!r.querySelector('[data-testid="reply"]'),width:b?.getBoundingClientRect().width,height:b?.getBoundingClientRect().height,version:b?.dataset.xwbSave};})};
   if(action==='scroll'){window.scrollBy({top:(args.direction==='up'?-1:1)*Math.min(innerHeight*.8,850),behavior:'instant'});return {scrolled:true};}
@@ -119,4 +131,4 @@ async function xPageAction(action,args={}) {
   }
   throw Error('此页面动作未开放');
 }
-if(typeof module!=='undefined')module.exports={xNormalizeTweet,xHandle,xDraftState};
+if(typeof module!=='undefined')module.exports={xNormalizeTweet,xHandle,xDraftState,xBookmarkView};

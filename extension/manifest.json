@@ -1,13 +1,32 @@
 {
   "manifest_version": 3,
   "name": "X 资料工作台",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minimum_chrome_version": "116",
   "description": "保存指定 X 页的原文、图片和关系，主动开启有界 AI 研究。",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "alarms"],
-  "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://pbs.twimg.com/*", "http://127.0.0.1:8915/*"],
-  "background": {"service_worker": "background.js"},
-  "action": {"default_title": "打开 X 资料侧栏"},
-  "side_panel": {"default_path": "panel.html"},
-  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://pbs.twimg.com/*",
+    "http://127.0.0.1:8915/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "打开 X 资料侧栏"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
 }

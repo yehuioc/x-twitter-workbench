@@ -232,7 +232,7 @@ class Fixture(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(extension_archive())) as archive:
             expected={'manifest.json','background.js','buttons.js','site.js','panel.html','panel.js','panel.css','LICENSE','THIRD_PARTY_NOTICES.md'}
             self.assertEqual(set(archive.namelist()),expected)
-            self.assertEqual(json.loads(archive.read('manifest.json'))['version'],'0.2.0')
+            self.assertEqual(json.loads(archive.read('manifest.json'))['version'],'0.3.0')
             self.assertIn('Copyright (c) 2026 angiin',archive.read('THIRD_PARTY_NOTICES.md').decode())
 
 if __name__=='__main__':unittest.main()

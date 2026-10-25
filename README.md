@@ -6,7 +6,7 @@ git_mode: independent
 
 使用自己的 Chrome 登录 X，保存值得再读的帖子、长文、图片与可核对的引用／同作者回复关系，在本地检索、记笔记、加标签和导出。主动开启 AI 接管后，可以按主题搜索、精读和整理。原文、个人笔记、模型翻译及研究判断分别保存。
 
-当前版本：**0.2.0**。采用 Chrome 扩展＋本机 Python 服务，不需要导出浏览器 Cookie，也不依赖 X 官方 API。项目不是 X 或 Google 的官方产品。
+当前版本：**0.3.0**。采用 Chrome 扩展＋本机 Python 服务，不需要导出浏览器 Cookie，也不依赖 X 官方 API。项目不是 X 或 Google 的官方产品。
 
 ## 安装与启动
 
@@ -41,6 +41,26 @@ python -X utf8 -B run_x.py serve --port 8915
 
 图片仅从 `pbs.twimg.com` 读取，不附带 Cookie。单图上限8MB、单轮合计24MB，最多同时下载2张，并有有界短期缓存。服务不可用时，手动读取结果可进入扩展小容量待同步区；恢复后需主动同步并核对账号，超过容量会明确拒绝，不把缓存称为已经落盘。
 
+## X 书签
+
+工作台的“X 书签”连接已有资料库，无需另建收藏系统。手动保存与 X 书签观察分别记录；按原帖 ID 去重，按账号区分书签来源。正文、图片、个人笔记、原始观察时间与来源证据保留，旧归档不会冒充本轮刷新，未再次出现的记录也不会被删除。
+
+- 扩展侧栏的“读取并保存当前加载的书签”可以在手动模式打开全部书签页，保存已加载的帖子与可取得图片。
+- 批量同步在工作台运行，需要扩展 0.3.0、绑定及主动开启接管。“检查新增书签”从顶部检查，到达连续历史重叠页或预算后结束；“继续读取历史书签”按账号保存最后已处理原帖 ID，下次先找回该位置。两种位置分别维护。
+- 每页先持久化原文、候选和读取状态，正文和图片一致且可核对的已有资料直接复用；新增或变化条目按预算保存，不完整的条目随后进入详情补读。取消、中断或失败保留已存资料和候选，不自动重放。部分条目仍不完整时，可以“运行／补全本批次”。
+- 每轮条数、滚动和时间有上限。页面停滞、找不到旧位置、空列表和预算用尽分别说明；滚动停滞**不能证明已取完全部历史**。旧位置因移动或删除而失效时，可勾选“从顶部重新扫描历史”，不会删除已有资料。当前入口读取全部书签列表，不支持把书签文件夹或推荐栏误当同一来源。
+- “阅读本地书签”进入资料库的书签筛选，可搜索、记笔记、导出，或选择后创建模型研究。原帖和长帖中记录的资源链接可以直接打开，不自动抓取站外正文，也不自动调用模型。
+
+已有 personal-ingestion 的规范 JSON 可显式导入：
+
+```shell
+python -X utf8 -B run_x.py import-bookmarks --posts-dir "/your/archive/x/posts" --attachments-dir "/your/attachments/x"
+```
+
+导入只读旧库，复制登记的允许图片并按内容去重；不移动、覆盖或删除旧文件，不接入旧模块的定时任务和凭据。导入的旧版本不会覆盖工作台已保存的当前版本或用户笔记。缺失观察时间显示为“未取得”，缺图与受限正文保留原始边界；CLI 输出逐项失败，不能用文件扫描数量冒充成功导入。HTTP/MCP 不开放任意本地路径导入。
+
+扩展动作与后台同步已经过合成页面、真实桥接协议、预算截断、跨账号拒绝、旧位置缺失、重复导入和图片保全测试。本机还用已有真实归档验证过导入、阅读、图片、检索和导出；一次旧模块书签首屏读取也已验证，**不把该读取当成扩展的真实书签页验收**。扩展离线或绑定页未开启时，批量按钮保持不可运行，本地阅读继续可用。
+
 ## 研究与来源复用
 
 输入研究问题、搜索词、精读和翻页上限、时间预算，然后选择来源方式：
@@ -69,13 +89,15 @@ python -X utf8 -B run_x.py serve --port 8915
 {"mcpServers":{"x-workbench":{"command":"python","args":["-X","utf8","-B","/absolute/path/to/x-twitter-workbench/run_x.py","mcp"]}}}
 ```
 
-工具包括 `x_status`、`x_search`、`x_local_sources`、`x_get`、`x_annotate`、`x_browser`、`x_create_task`、`x_run`、`x_cancel`、`x_task`、`x_packet`、`x_complete`、`x_source_image`。`x_status` 返回概况，完整来源、结果和事件使用 `x_task`。图片 index 从0开始。
+工具包括 `x_status`、`x_search`、`x_local_sources`、`x_get`、`x_annotate`、`x_browser`、`x_create_task`、`x_run`、`x_cancel`、`x_task`、`x_packet`、`x_complete`、`x_source_image`、`x_create_bookmark_sync`。`x_status` 返回概况，完整来源、结果和事件使用 `x_task`。图片 index 从0开始。
 
 HTTP 入口为 `POST http://127.0.0.1:8915/api/v1`，使用 `Content-Type: application/json` 和 `Authorization: Bearer <本机凭据>`。例如：
 
 ```json
 {"action":"search","args":{"query":"合成示例关键词"}}
 ```
+
+书签同步使用 `create_bookmark_sync`，`mode` 为 `recent` 或 `backfill`，通过 `run` 启动；`search` 可传 `collection: "bookmarks"` 与可选 `owner` 筛选书签。直接浏览器动作新增 `bookmarks`，仍受同一接管许可约束。
 
 研究的 `source_mode` 可为 `hybrid`、`online` 或 `local`。外部接口不能配对扩展、更改接管权限或模型设置，也不能发布站内互动。
 

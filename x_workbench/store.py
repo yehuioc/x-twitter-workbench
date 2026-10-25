@@ -30,7 +30,7 @@ def media_type(payload):
     raise Problem('附件不是允许的图片格式')
 
 class Store:
-    def __init__(self, home=HOME):
+    def __init__(self, home=HOME, recover=True):
         self.home = Path(home).resolve()
         if not self.home.is_relative_to(ROOT): raise Problem('资料必须保存在项目内')
         self.home.mkdir(parents=True, exist_ok=True)
@@ -52,6 +52,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS search_docs(post_id TEXT PRIMARY KEY, original TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', text TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS task_sources(task_id TEXT NOT NULL,post_id TEXT NOT NULL,PRIMARY KEY(task_id,post_id));
             CREATE INDEX IF NOT EXISTS task_sources_post ON task_sources(post_id,task_id);
+            CREATE TABLE IF NOT EXISTS bookmarks(owner TEXT NOT NULL,post_id TEXT NOT NULL,origin TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,PRIMARY KEY(owner,post_id,origin));
+            CREATE INDEX IF NOT EXISTS bookmarks_post ON bookmarks(post_id);
             ''')
             self.fts = True
             try: db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(post_id UNINDEXED,text,tokenize="trigram")')
@@ -64,7 +66,7 @@ class Store:
             elif self.fts and db.execute('SELECT count(*) FROM search_fts').fetchone()[0]!=db.execute('SELECT count(*) FROM search_docs').fetchone()[0]:
                 db.execute('DELETE FROM search_fts')
                 db.execute('INSERT INTO search_fts(rowid,post_id,text) SELECT p.rowid,d.post_id,d.text FROM search_docs d JOIN posts p ON p.id=d.post_id')
-            db.execute("UPDATE tasks SET state='interrupted' WHERE state IN ('running','collecting','generating')")
+            if recover: db.execute("UPDATE tasks SET state='interrupted' WHERE state IN ('running','collecting','generating')")
     @contextlib.contextmanager
     def db(self):
         db = sqlite3.connect(self.path, timeout=15)
@@ -95,7 +97,7 @@ class Store:
         ids={r['id'] for r in body.get('sources',[]) if isinstance(r,dict) and isinstance(r.get('id'),str)} if body.get('result') else set()
         db.executemany('INSERT OR IGNORE INTO task_sources VALUES(?,?)',[(tid,pid) for pid in ids])
         for pid in old|ids: self._index_post(db,pid)
-    def capture(self, raw):
+    def capture(self, raw, select_latest=True):
         if not isinstance(raw, dict): raise Problem('原文须为对象')
         pid = post_id(raw.get('id'))
         text = raw.get('text', '')
@@ -140,13 +142,22 @@ class Store:
         body['coverage']['images_saved'] = sum(x['status'] == 'saved' for x in body['media'])
         # Capture identity excludes observation time and counters; repeat saves do not duplicate.
         identity = {k: body[k] for k in ('id','text','author','relations','media','coverage','published_at')}
-        revision = sha(identity)
         with self.lock, self.db() as db:
             old = db.execute('SELECT latest FROM posts WHERE id=?', (pid,)).fetchone()
+            previous=json.loads(db.execute('SELECT body FROM snapshots WHERE revision=?',(old[0],)).fetchone()[0]) if old else None
+            if previous:
+                existing={m['url']:m for m in previous['media'] if m.get('file')}
+                for index,media in enumerate(body['media']):
+                    if not media.get('file') and media['url'] in existing:
+                        try:
+                            self.media_file(existing[media['url']]);body['media'][index]=existing[media['url']]
+                        except Problem: pass
+                body['coverage']['images_saved']=sum(m.get('status')=='saved' for m in body['media'])
+            revision = sha(identity)
             db.execute('INSERT OR IGNORE INTO snapshots VALUES(?,?,?,?)', (revision, pid, dumps(body), now()))
             select = revision
             if old:
-                previous = json.loads(db.execute('SELECT body FROM snapshots WHERE revision=?', (old[0],)).fetchone()[0])
+                if not select_latest: select=old[0]
                 if previous['coverage'].get('text_complete') is True and body['coverage'].get('text_complete') is not True:
                     select = old[0]
                 db.execute('UPDATE posts SET latest=?,last_seen=? WHERE id=?', (select, now(), pid))
@@ -166,7 +177,8 @@ class Store:
             s = db.execute('SELECT * FROM snapshots WHERE revision=? AND post_id=?', (revision or p['latest'], pid)).fetchone()
             if not s: raise Problem('原文版本不存在或不属于此帖')
             versions = db.execute('SELECT revision,created FROM snapshots WHERE post_id=? ORDER BY created DESC', (pid,)).fetchall()
-        return dict(p) | {'tags':json.loads(p['tags']),'revision':s['revision'],'source':json.loads(s['body']),'versions':[dict(x) for x in versions]}
+            bookmarks=db.execute('SELECT owner,origin,first_seen,last_seen FROM bookmarks WHERE post_id=?',(pid,)).fetchall()
+        return dict(p) | {'tags':json.loads(p['tags']),'revision':s['revision'],'source':json.loads(s['body']),'versions':[dict(x) for x in versions],'bookmarks':[dict(x) for x in bookmarks]}
     def annotate(self, pid, note, tags):
         self.get(pid)
         if not isinstance(note, str) or len(note)>100000 or not isinstance(tags,list) or len(tags)>100 or any(not isinstance(t,str) or len(t)>100 for t in tags): raise Problem('笔记或标签格式无效')
@@ -174,10 +186,14 @@ class Store:
             db.execute('UPDATE posts SET note=?,tags=? WHERE id=?', (note, dumps(list(dict.fromkeys(t.strip() for t in tags if t.strip()))), pid))
             self._index_post(db,pid)
         return self.get(pid)
-    def search(self, query='', tag='', offset=0, limit=50, brief=False):
+    def search(self, query='', tag='', offset=0, limit=50, brief=False, collection='', owner=''):
         if not isinstance(query,str) or len(query)>500: raise Problem('检索词无效')
         offset, limit = max(0,int(offset)), min(100,max(1,int(limit)))
         clauses, args = [], []
+        if collection not in ('','bookmarks'): raise Problem('资料来源筛选无效')
+        if collection=='bookmarks':
+            clauses.append('EXISTS(SELECT 1 FROM bookmarks b WHERE b.post_id=p.id'+(' AND b.owner=?' if owner else '')+')')
+            if owner: args.append(owner)
         indexed=[token for token in query.split() if len(token)>=3] if self.fts else []
         if indexed:
             clauses.append('p.id IN (SELECT post_id FROM search_fts WHERE search_fts MATCH ?)')
@@ -206,6 +222,21 @@ class Store:
                     found={r['id']:{k:r[k] for k in r.keys() if k!='body'}|{'tags':json.loads(r['tags']),'revision':r['latest'],'source':json.loads(r['body']),'versions':versions[r['id']]} for r in rows}
                 items=[found[pid] for pid in ids]
         return {'items':items,'total':total,'offset':offset,'limit':limit}
+    def mark_bookmarks(self,owner,ids,origin='extension',observed_at=None):
+        if not isinstance(owner,str) or not re.fullmatch(r'[A-Za-z0-9_:-]{1,100}',owner) or origin not in ('extension','personal_ingestion','personal_ingestion_live'): raise Problem('书签来源无效')
+        stamp=observed_at or now()
+        with self.db() as db:
+            for pid in dict.fromkeys(ids):
+                post_id(pid)
+                if not db.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): raise Problem('书签原文尚未保存')
+                db.execute('INSERT INTO bookmarks VALUES(?,?,?,?,?) ON CONFLICT(owner,post_id,origin) DO UPDATE SET last_seen=excluded.last_seen',(owner,pid,origin,stamp,stamp))
+    def bookmark_ids(self,owner,origin='extension'):
+        with self.db() as db: return {r[0] for r in db.execute('SELECT post_id FROM bookmarks WHERE owner=? AND origin=?',(owner,origin))}
+    def bookmark_status(self):
+        with self.db() as db:
+            rows=db.execute('SELECT owner,origin,count(*) AS count,max(last_seen) AS observed_at FROM bookmarks GROUP BY owner,origin ORDER BY owner,origin').fetchall()
+            total=db.execute('SELECT count(DISTINCT post_id) FROM bookmarks').fetchone()[0]
+        return {'total':total,'sources':[dict(r) for r in rows],'scope':'历史观察记录；不据此推断当前仍在书签内，也不因未出现而删除'}
     def local_sources(self,topic,keywords,limit=10,threads=False):
         queries=list(dict.fromkeys(keywords or [topic])); found={}
         for query in queries:
@@ -229,8 +260,8 @@ class Store:
         return list(found.values())
     def task_summaries(self):
         with self.db() as db:
-            rows=db.execute("SELECT id,state,updated,json_extract(body,'$.topic') AS topic,json_extract(body,'$.sources') AS sources,json_type(body,'$.result') IS NOT NULL AS has_result FROM tasks ORDER BY updated DESC LIMIT 100").fetchall()
-        return [{'id':r['id'],'state':r['state'],'updated':r['updated'],'has_result':bool(r['has_result']),'body':{'topic':r['topic'],'sources':json.loads(r['sources'] or '[]')}} for r in rows]
+            rows=db.execute("SELECT id,state,updated,json_extract(body,'$.kind') AS kind,json_extract(body,'$.topic') AS topic,json_extract(body,'$.sources') AS sources,json_type(body,'$.result') IS NOT NULL AS has_result FROM tasks ORDER BY updated DESC LIMIT 100").fetchall()
+        return [{'id':r['id'],'state':r['state'],'updated':r['updated'],'has_result':bool(r['has_result']),'body':{'kind':r['kind'] or 'research','topic':r['topic'],'sources':json.loads(r['sources'] or '[]')}} for r in rows]
     def task_state(self,tid):
         with self.db() as db: row=db.execute('SELECT state FROM tasks WHERE id=?',(tid,)).fetchone()
         if not row: raise Problem('任务不存在')
