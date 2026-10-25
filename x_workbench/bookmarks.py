@@ -56,7 +56,7 @@ def sync(engine,tid,deadline):
     mode=t['mode'];cursor_key='bookmark_backfill:'+owner
     progress=t.get('bookmark_progress') or {'anchor':(store.setting(cursor_key,{}) or {}).get('anchor') if mode=='backfill' and not t.get('reset_position') else None,'queue':[],'pages':0}
     refs={r['id']:r for r in t.get('sources',[])};known=store.bookmark_ids(owner)
-    old=set(known);visited=set();reason='scroll_budget';empty=False;unavailable=0;attempted=set();reused=0
+    old=set(known);visited=set();observed=set();reason='scroll_budget';empty=False;unavailable=0;attempted=set();reused=0
     def checkpoint():
         store.update_task(tid,'running',{'owner':owner,'bookmark_progress':progress,'sources':list(refs.values())},expected=('running',))
     def stopped(): return engine.cancelled(tid) or time.monotonic()>=deadline
@@ -79,21 +79,39 @@ def sync(engine,tid,deadline):
         return True
     checkpoint()
     if not capture_pending(): raise Problem('本轮时间到期；未读书签进度已保存')
-    anchor=progress.get('anchor');seeking=bool(anchor);stale=0;overlap=0;last_signature=None
+    anchor=progress.get('anchor');seeking=bool(anchor);stale=0;overlap=0;last_signature=None;last_position=None
+    continued_scrolls=0;seek_scrolls=0
     # Reopen once, scan continuously, then read incomplete details. No list/detail
     # round trip per bookmark. Resumption seeks the saved ID, never trusts pixels.
-    result=engine.browser('bookmarks',{'mode':'open','reset':True,'metadata_only':True},stopped)
-    for page in range(t['max_scrolls']+1):
-        if stopped(): reason='time_budget';break
+    current_url=urlsplit(active[0].get('url') or '')
+    warm=bool(seeking and current_url.scheme=='https' and current_url.hostname in ('x.com','twitter.com') and current_url.path.rstrip('/')=='/i/bookmarks')
+    result=engine.browser('bookmarks',{'mode':'open','reset':not warm,'metadata_only':True},stopped)
+    if warm and anchor not in validate_view(result,owner):
+        result=engine.browser('bookmarks',{'mode':'open','reset':True,'metadata_only':True},stopped)
+    while True:
+        if stopped(): reason='seek_time_budget' if seeking else 'time_budget';break
         ids=validate_view(result,owner);empty=result.get('empty') is True and not ids
         unavailable=max(unavailable,int(result.get('unavailable',0)))
         if empty:
             if mode=='backfill' and t.get('reset_position'):store.configure(cursor_key,{'anchor':None,'scope':'empty_observed','observed_at':now()})
             reason='empty_observed';break
-        signature=tuple(ids);fresh=[pid for pid in ids if pid not in visited];visited.update(ids)
-        stale=stale+1 if signature==last_signature and not fresh else 0;last_signature=signature
+        signature=tuple(ids);newly_observed=set(ids)-observed;observed.update(ids)
+        position=(result.get('position') or {}).get('y')
+        stale=stale+1 if signature==last_signature and not newly_observed and position==last_position else 0
+        last_signature=signature;last_position=position
         if stale>=3: reason='stalled';break
-        if seeking and anchor in ids: seeking=False
+        eligible=ids
+        if seeking:
+            if anchor in ids:
+                seeking=False;eligible=ids[ids.index(anchor)+1:]
+            else:
+                # Seeking a known position must not consume the new-page budget.
+                # It is bounded by the shared deadline and a hard operation cap.
+                if seek_scrolls>=5000:reason='anchor_not_found';break
+                seek_scrolls+=1
+                result=engine.browser('bookmarks',{'mode':'scroll','metadata_only':True},stopped)
+                continue
+        fresh=[pid for pid in eligible if pid not in visited];visited.update(eligible)
         candidates={p['id']:p for p in result['posts']}
         reusable=set()
         for pid in fresh:
@@ -136,13 +154,14 @@ def sync(engine,tid,deadline):
         checkpoint()
         if reason=='item_budget':break
         if mode=='recent' and overlap>=2: reason='recent_overlap';break
-        if page<t['max_scrolls']:
-            result=engine.browser('bookmarks',{'mode':'scroll','metadata_only':True},stopped)
-    if seeking: reason='anchor_not_found'
+        if continued_scrolls>=t['max_scrolls']:break
+        continued_scrolls+=1
+        result=engine.browser('bookmarks',{'mode':'scroll','metadata_only':True},stopped)
+    if seeking and reason!='seek_time_budget': reason='anchor_not_found'
     if not capture_pending(): reason='time_budget'
     if engine.cancelled(tid): return
     partial=sum(x['state']!='done' for x in progress['queue'])
-    summary={'reason':reason,'saved':len(progress['queue']),'reused':reused,'partial':partial,'observed':len(visited),'unavailable_observed':unavailable,
+    summary={'reason':reason,'saved':len(progress['queue']),'reused':reused,'partial':partial,'observed':len(observed),'seek_scrolls':seek_scrolls,'continued_scrolls':continued_scrolls,'unavailable_observed':unavailable,
         'scope':'本轮可见书签；不代表全部历史。未出现的旧记录保留，检查新增不覆盖历史位置。'}
     store.update_task(tid,'completed',{'bookmark_result':summary},expected=('running',))
     store.event(tid,'书签批次结束：'+reason+'；资料已落盘，覆盖边界已保留')

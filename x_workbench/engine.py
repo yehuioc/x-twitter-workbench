@@ -66,9 +66,11 @@ class Engine:
         with self.lock:
             if tid in self.running: raise Problem('任务正在运行')
             t=self.store.task(tid)
-            retry_bookmarks=t['body'].get('kind')=='bookmarks' and t['state']=='completed' and any(q['state']!='done' for q in t['body'].get('bookmark_progress',{}).get('queue',[]))
+            retry_bookmarks=t['body'].get('kind')=='bookmarks' and (t['state']=='cancelled' or t['state']=='completed' and any(q['state']!='done' for q in t['body'].get('bookmark_progress',{}).get('queue',[])))
             if t['state'] not in ('queued','failed','interrupted','awaiting_model') and not retry_bookmarks: raise Problem('当前任务不可重跑；请新建研究以保留旧结果')
-            self.store.update_task(tid,'running',{'error':''},expected=(t['state'],)); self.running.add(tid)
+            patch={'error':''}
+            if t['body'].get('kind')=='bookmarks':patch['bookmark_result']=None
+            self.store.update_task(tid,'running',patch,expected=(t['state'],)); self.running.add(tid)
             worker=threading.Thread(target=self.worker,args=(tid,),daemon=True);self.workers[tid]=worker;worker.start()
         return self.store.task(tid)
     def worker(self,tid):

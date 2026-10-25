@@ -32,7 +32,7 @@ def response(msg,port):
     if not isinstance(msg,dict) or msg.get('jsonrpc')!='2.0': return {'jsonrpc':'2.0','id':None,'error':{'code':-32600,'message':'Invalid Request'}}
     if 'id' not in msg: return None
     base={'jsonrpc':'2.0','id':msg['id']}; method=msg.get('method')
-    if method=='initialize': return base|{'result':{'protocolVersion':msg.get('params',{}).get('protocolVersion','2025-11-25'),'capabilities':{'tools':{}},'serverInfo':{'name':'x-workbench','version':'0.3.0'}}}
+    if method=='initialize': return base|{'result':{'protocolVersion':msg.get('params',{}).get('protocolVersion','2025-11-25'),'capabilities':{'tools':{}},'serverInfo':{'name':'x-workbench','version':'0.3.1'}}}
     if method=='ping': return base|{'result':{}}
     if method=='tools/list': return base|{'result':{'tools':[{'name':name,'description':desc,'inputSchema':{'type':'object','properties':props,'required':REQUIRED.get(action,['id']),'additionalProperties':False}} for name,(action,desc,props) in TOOLS.items()]}}
     if method=='tools/call':

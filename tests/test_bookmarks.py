@@ -77,6 +77,76 @@ class BookmarkTests(unittest.TestCase):
         self.assertNotEqual(t['body']['bookmark_result']['reason'],'anchor_not_found')
         self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],'101')
         self.assertIn('999',self.store.bookmark_ids('reader'))
+    def test_history_seeking_does_not_spend_new_page_budget(self):
+        for pid in ['101','102']:
+            self.store.capture(post(pid));self.store.mark_bookmarks('reader',[pid])
+        self.store.configure('bookmark_backfill:reader',{'anchor':'102'})
+        t,calls=self.run_sync([view(['100']),view(['101']),view(['102']),view(['103']),view(['104'])],mode='backfill',max_scrolls=1)
+        result=t['body']['bookmark_result']
+        self.assertEqual(result['seek_scrolls'],2);self.assertEqual(result['continued_scrolls'],1)
+        self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],'103')
+        self.assertEqual(self.store.bookmark_ids('reader'),{'101','102','103'})
+        self.assertNotIn('100',self.store.bookmark_ids('reader'))
+    def test_history_advances_across_rounds_and_store_restart(self):
+        pages=[view([str(pid)]) for pid in range(101,108)]
+        self.run_sync(pages,mode='backfill',max_scrolls=1)
+        self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],'102')
+        self.engine.close();self.store=Store(self.home);self.engine=Engine(self.store)
+        self.engine.bridge.status=lambda:[{'online':True,'control':True,'account':'reader','version':'0.3.0'}]
+        for expected in ('103','104','105'):
+            self.run_sync(pages,mode='backfill',max_scrolls=1)
+            self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],expected)
+        self.assertEqual(self.store.bookmark_ids('reader'),{str(pid) for pid in range(101,106)})
+    def test_warm_history_page_continues_without_resetting_to_top(self):
+        self.engine.bridge.status=lambda:[{'online':True,'control':True,'account':'reader','version':'0.3.0','url':'https://x.com/i/bookmarks'}]
+        self.store.configure('bookmark_backfill:reader',{'anchor':'102'})
+        t,calls=self.run_sync([view(['102','103']),view(['104'])],mode='backfill',max_scrolls=1)
+        self.assertFalse(calls[0][1]['reset'])
+        self.assertEqual(t['body']['bookmark_result']['seek_scrolls'],0)
+        self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],'104')
+        self.assertNotIn('102',self.store.bookmark_ids('reader'))
+    def test_warm_page_without_anchor_reopens_top_before_seeking(self):
+        self.engine.bridge.status=lambda:[{'online':True,'control':True,'account':'reader','version':'0.3.0','url':'https://x.com/i/bookmarks'}]
+        self.store.configure('bookmark_backfill:reader',{'anchor':'102'});calls=[];index=0
+        def browser(operation,args,cancel):
+            nonlocal index
+            calls.append(args)
+            if args['mode']=='open' and not args['reset']:return view(['777'])
+            if args['mode']=='open':index=101
+            else:index+=1
+            return view([str(index)])
+        self.engine.browser=browser;t=bookmarks.create_sync(self.store,{'mode':'backfill','max_scrolls':1});self.store.update_task(t['id'],'running')
+        bookmarks.sync(self.engine,t['id'],time.monotonic()+5)
+        self.assertEqual([a['reset'] for a in calls if a['mode']=='open'],[False,True])
+        self.assertEqual(self.store.bookmark_ids('reader'),{'103'})
+    def test_tall_card_scroll_progress_does_not_look_like_end_of_list(self):
+        pages=[view(['101'])|{'position':{'y':y}} for y in (0,700,1400,2100)]+[view(['102'])|{'position':{'y':2800}}]
+        t,_=self.run_sync(pages,max_scrolls=4)
+        self.assertEqual(self.store.bookmark_ids('reader'),{'101','102'})
+        self.assertEqual(t['body']['bookmark_result']['reason'],'scroll_budget')
+    def test_seeking_deadline_preserves_history_and_does_not_capture_head(self):
+        self.store.configure('bookmark_backfill:reader',{'anchor':'999'})
+        def browser(*args):time.sleep(.02);return view(['101'])
+        self.engine.browser=browser;t=bookmarks.create_sync(self.store,{'mode':'backfill'});self.store.update_task(t['id'],'running')
+        bookmarks.sync(self.engine,t['id'],time.monotonic()+.001)
+        self.assertEqual(self.store.task(t['id'])['body']['bookmark_result']['reason'],'seek_time_budget')
+        self.assertEqual(self.store.setting('bookmark_backfill:reader')['anchor'],'999')
+        self.assertFalse(self.store.bookmark_ids('reader'))
+    def test_explicitly_resuming_cancelled_bookmark_batch_finishes_pending_details(self):
+        saved=self.store.capture(post('101',complete=False));self.store.mark_bookmarks('reader',['101'])
+        t=bookmarks.create_sync(self.store,{'mode':'backfill','max_scrolls':1})
+        self.store.update_task(t['id'],'cancelled',{'owner':'reader','sources':[{'id':'101','revision':saved['revision']}],'bookmark_progress':{'anchor':'101','pages':1,'queue':[{'id':'101','state':'pending'}]}})
+        calls=[]
+        def browser(operation,args,cancel):
+            calls.append(operation)
+            if operation=='read_post':return self.engine.save({'posts':[post('101')]})
+            return view(['101'])
+        self.engine.browser=browser;self.engine.run(t['id']);end=time.monotonic()+5
+        while t['id'] in self.engine.running and time.monotonic()<end:time.sleep(.01)
+        current=self.store.task(t['id'])
+        self.assertEqual(current['state'],'completed',current['body'].get('error'))
+        self.assertEqual(current['body']['bookmark_progress']['queue'][0]['state'],'done')
+        self.assertEqual(calls.count('read_post'),1)
     def test_partial_details_checkpoint_and_retry_without_changing_account(self):
         t,calls=self.run_sync([view(['101'],complete=False)],max_scrolls=1)
         self.assertEqual(t['body']['bookmark_progress']['queue'][0]['state'],'done')
