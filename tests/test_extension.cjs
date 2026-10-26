@@ -3,13 +3,14 @@ const test=require('node:test'),assert=require('node:assert/strict'),vm=require(
 const {xNormalizeTweet,xHandle,xDraftState,xBookmarkView,xBookmarkContext}=require('../extension/site.js');
 
 test('history redirect requires the selected bookmarks tab and cannot save browsing history or folders',()=>{
-  let selected=false,clicks=0,label='书签';
+  let selected=false,clicks=0,label='书签',mounted=false;
   const tab={get innerText(){return label;},getAttribute:k=>k==='aria-selected'&&selected?'true':'false',click:()=>{clicks++;selected=true;}};
-  const column={querySelector:()=>null,querySelectorAll:s=>s==='[role="tab"]'?[tab]:[]};
+  const column={querySelector:()=>null,querySelectorAll:s=>s==='[role="tab"]'&&mounted?[tab]:[]};
   global.location={pathname:'/i/history',search:'',href:'https://x.com/i/history'};
   global.document={querySelector:s=>s.includes('primaryColumn')?column:null};global.scrollY=0;
   try{
     assert.throws(()=>xBookmarkView(),/浏览历史/);
+    assert.equal(xBookmarkContext(true),'waiting_bookmarks_tab');mounted=true;
     assert.equal(xBookmarkContext(true),'selecting_bookmarks_tab');assert.equal(clicks,1);
     assert.equal(xBookmarkView().route_evidence,'selected_bookmarks_tab');
     selected=false;label='浏览历史';assert.throws(()=>xBookmarkContext(true),/浏览历史/);assert.equal(clicks,1);
@@ -65,13 +66,13 @@ test('save control replaces the legacy article child and stays inside the native
   error=true;await button.listeners.click({preventDefault(){},stopPropagation(){}});assert.equal(button.dataset.state,'error');assert.match(button.title,/当前动作失败/);assert.equal(button.children[0].tagName,'SVG');
 });
 function runner(){
-  const listeners={},local={},session={},timers=new Set(),actions=[],injections=[],navigations=[],posted=[];let bookmarkResult=null,mediaResponse=null,networkOffline=false,pollHandler=null;let tab={id:7,url:'https://x.com/home',status:'complete',autoDiscardable:true},account='reader',failRead=false,postMap={},nullAction='';
+  const listeners={},local={},session={},timers=new Set(),actions=[],injections=[],navigations=[],posted=[];let bookmarkResult=null,mediaResponse=null,networkOffline=false,pollHandler=null,navigationDelay=0;let tab={id:7,url:'https://x.com/home',status:'complete',autoDiscardable:true},account='reader',failRead=false,postMap={},nullAction='';
   const event=name=>({addListener(fn){listeners[name]=fn;}});
   const storage=obj=>({async get(key){if(Array.isArray(key))return Object.fromEntries(key.map(k=>[k,obj[k]]));return {[key]:obj[key]};},async set(value){Object.assign(obj,JSON.parse(JSON.stringify(value)));}});
-  const chrome={sidePanel:{setPanelBehavior(){}},storage:{local:storage(local),session:storage(session)},alarms:{async clear(){},async create(){},onAlarm:event('alarm')},runtime:{getManifest:()=>({version:'0.1.0'}),getURL:p=>'chrome-extension://'+'a'.repeat(32)+'/'+p,onMessage:event('message'),onConnect:event('connect'),onStartup:event('startup'),onInstalled:event('installed')},windows:{async update(){}},tabs:{async query(){return [tab];},async get(){return {...tab};},async update(id,patch){if(patch.url)navigations.push(patch.url);Object.assign(tab,patch);return {...tab};},async goBack(){tab.url='https://x.com/home';},onRemoved:event('removed'),onUpdated:event('updated')},scripting:{async executeScript(req){if(req.files){injections.push(...req.files);return [{result:true}];}const a=req.args?.[0],args=req.args?.[1];actions.push(a);if(a===nullAction)return [{result:null}];if(a==='identity')return [{result:{account}}];if(a==='navigation_guard')return [{result:{safe:true}}];if(a==='position')return [{result:{url:tab.url,y:0}}];if(a==='bookmarks')return [{result:bookmarkResult?{...bookmarkResult,account,url:tab.url}:{account,url:tab.url,root_ids:[],posts:[],empty:true}}];if(a==='read_post'){if(failRead)throw Error('recoverable selector failure');return [{result:{ready:true,posts:[postMap[args.id]||{id:args.id,text:'正文',author:{handle:'reader'},relations:[],media:[],coverage:{text_complete:true}}],visible_posts:[]}}];}return [{result:{cards:[],url:tab.url}}];}}};
+  const chrome={sidePanel:{setPanelBehavior(){}},storage:{local:storage(local),session:storage(session)},alarms:{async clear(){},async create(){},onAlarm:event('alarm')},runtime:{getManifest:()=>({version:'0.1.0'}),getURL:p=>'chrome-extension://'+'a'.repeat(32)+'/'+p,onMessage:event('message'),onConnect:event('connect'),onStartup:event('startup'),onInstalled:event('installed')},windows:{async update(){}},tabs:{async query(){return [tab];},async get(){return {...tab};},async update(id,patch){if(patch.url)navigations.push(patch.url);if(patch.url&&navigationDelay){const destination=patch.url,rest={...patch};delete rest.url;Object.assign(tab,rest);const timer=setTimeout(()=>{tab.url=destination;timers.delete(timer);},navigationDelay);timers.add(timer);}else Object.assign(tab,patch);return {...tab};},async goBack(){tab.url='https://x.com/home';},onRemoved:event('removed'),onUpdated:event('updated')},scripting:{async executeScript(req){if(req.files){injections.push(...req.files);return [{result:true}];}const a=req.args?.[0],args=req.args?.[1];actions.push(a);if(a===nullAction)return [{result:null}];if(a==='identity')return [{result:{account}}];if(a==='navigation_guard')return [{result:{safe:true}}];if(a==='position')return [{result:{url:tab.url,y:0}}];if(a==='open_bookmarks')return [{result:/\/i\/(bookmarks|history)$/.test(tab.url)?{route_evidence:'bookmarks_route'}:{adapter_error:'bookmark page is still loading'}}];if(a==='bookmarks')return [{result:bookmarkResult?{...bookmarkResult,account,url:tab.url}:{account,url:tab.url,root_ids:[],posts:[],empty:true}}];if(a==='read_post'){if(failRead)throw Error('recoverable selector failure');return [{result:{ready:true,posts:[postMap[args.id]||{id:args.id,text:'正文',author:{handle:'reader'},relations:[],media:[],coverage:{text_complete:true}}],visible_posts:[]}}];}return [{result:{cards:[],url:tab.url}}];}}};
   const sandbox={chrome,URL,AbortController,AbortSignal,crypto:require('node:crypto').webcrypto,fetch:async(url,options)=>{if(networkOffline)throw new TypeError('Failed to fetch');if(mediaResponse&&url.startsWith('https://pbs.twimg.com/'))return mediaResponse(url,options);const body=JSON.parse(options.body);posted.push({url,body});if(url.endsWith('/poll')&&pollHandler){const result=await pollHandler(body);return {ok:true,json:async()=>({result})};}return {ok:true,json:async()=>({result:url.endsWith('/pair')?{token:'paired'}:url.endsWith('/capture')?{saved:body.posts,bookmark_ids:body.root_ids}:null})};},setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms);timers.add(t);return t;},clearTimeout:t=>{clearTimeout(t);timers.delete(t);},console,btoa:s=>Buffer.from(s,'binary').toString('base64')};
   vm.createContext(sandbox);vm.runInContext(fs.readFileSync(path.join(__dirname,'../extension/background.js'),'utf8')+'\nglobalThis.api={handle,state,execute,job,stop,checkRun,tick};',sandbox);
-  return {api:sandbox.api,session,local,listeners,tab,actions,injections,navigations,posted,poll(fn){pollHandler=fn;},offline(value=true){networkOffline=value;},bookmarks(value){bookmarkResult=value;},media(fn){mediaResponse=fn;},fail(){failRead=true;},posts(data){postMap=data;},nullResult(action){nullAction=action;},account(a){account=a;},close(){for(const t of timers)clearTimeout(t);}};
+  return {api:sandbox.api,session,local,listeners,tab,actions,injections,navigations,posted,delayNavigation(ms){navigationDelay=ms;},poll(fn){pollHandler=fn;},offline(value=true){networkOffline=value;},bookmarks(value){bookmarkResult=value;},media(fn){mediaResponse=fn;},fail(){failRead=true;},posts(data){postMap=data;},nullResult(action){nullAction=action;},account(a){account=a;},close(){for(const t of timers)clearTimeout(t);}};
 }
 test('background owns binding; recoverable error keeps grant; account drift stops',async()=>{
   const r=runner();try{await r.api.handle('pair',{code:'CODE'});await r.api.handle('bind');assert.equal(r.api.state().binding.control,false);await r.api.handle('control',{enabled:true});assert.equal(r.api.state().binding.control,true);await r.api.job('open_post',{id:'123'});r.fail();await assert.rejects(r.api.job('read_post',{id:'123'}),/selector failure/);assert.equal(r.api.state().binding.control,true);r.account('someoneelse');await assert.rejects(r.api.job('identity',{}),/账号/);assert.equal(r.api.state().binding.control,false);}finally{r.close();}
@@ -154,5 +155,15 @@ test('a failed poll from the old session cannot disable a freshly acknowledged g
     await r.api.handle('control',{enabled:true});assert.notEqual(r.api.state().binding.session,oldSession);
     rejectOld(new Error('old connection failed'));await oldPoll;
     assert.equal(r.api.state().binding.control,true);assert.equal(r.api.state().connected,true);
+  }finally{r.close();}
+});
+
+
+test('bookmark navigation waits for the new URL even when the old document still reports complete',async()=>{
+  const r=runner();try{
+    await r.api.handle('pair',{code:'CODE'});await r.api.handle('bind');r.delayNavigation(20);
+    r.bookmarks({root_ids:['123'],posts:[{id:'123',text:'收藏原文',media:[],coverage:{text_complete:true}}],empty:false});
+    const saved=await r.api.handle('bookmarks');assert.deepEqual(Array.from(saved.bookmark_ids),['123']);
+    assert.equal(r.tab.url,'https://x.com/i/bookmarks');
   }finally{r.close();}
 });

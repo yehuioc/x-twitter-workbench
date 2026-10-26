@@ -96,6 +96,7 @@ function xBookmarkContext(select=false){
   if(/^\/i\/history\/?$/.test(location.pathname)&&!location.search){
     const column=document.querySelector('[data-testid="primaryColumn"]')||document.querySelector('main');
     const tabs=[...(column?.querySelectorAll('[role="tab"]')||[])];
+    if(select&&!tabs.length)return 'waiting_bookmarks_tab';
     const bookmark=tabs.find(t=>/^(书签|書籤|Bookmarks)$/i.test((t.innerText||t.textContent||'').trim()));
     if(bookmark?.getAttribute('aria-selected')==='true')return 'selected_bookmarks_tab';
     if(select&&bookmark){bookmark.click();return 'selecting_bookmarks_tab';}

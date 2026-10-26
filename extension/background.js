@@ -28,7 +28,7 @@ async function page(action,args={},run=active){
 async function identity(){const r=await page('identity');if(!r.account||binding?.account&&r.account!==binding.account){stop('账号变化或无法核对，请重新绑定');throw Error(message);}return r;}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 async function until(probe,maximum=20000){const run=active,end=Math.min(Date.now()+maximum,active?.expires*1000||Infinity);while(Date.now()<end){checkRun(run);await check(run?.session||binding.session);const r=await probe();checkRun(run);if(r)return r;await sleep(350);}throw Error('页面未在时限内就绪；当前动作结束，未自动重放');}
-async function navigate(url,id){await identity();await page('navigation_guard');const session=binding.session;await chrome.tabs.update(binding.tab_id,{url});await until(async()=>{const t=await check(session);if(t.status!=='complete'||id&&t.url.match(/\/status\/(\d+)/)?.[1]!==id)return false;await identity();return true;},25000);}
+async function navigate(url,id){await identity();await page('navigation_guard');const session=binding.session;await chrome.tabs.update(binding.tab_id,{url});await until(async()=>{const t=await check(session);if(t.status!=='complete'||id&&t.url.match(/\/status\/(\d+)/)?.[1]!==id)return false;const bookmarkRedirect=url==='https://x.com/i/bookmarks'&&/^https:\/\/(x|twitter)\.com\/i\/history\/?$/.test(t.url);if(!id&&t.url!==url&&!bookmarkRedirect)return false;await identity();return true;},25000);}
 async function read(id){if(!validId(id))throw Error('帖子 ID 无效');let previous='';return until(async()=>{const r=await page('read_post',{id});if(!r?.ready)return false;const signature=JSON.stringify(r.posts.map(p=>[p.id,p.text,p.media,p.coverage.expanded]));if(signature!==previous){previous=signature;return false;}return r;},20000);}
 async function imageData(posts){
   const run=active,items=posts.flatMap(p=>p.media||[]),pending=new Map();let index=0,downloaded=0,payload=0;
@@ -66,12 +66,12 @@ async function execute(action,args={}){
     if(mode==='open'){
       if(!/^https:\/\/(x|twitter)\.com\/i\/(bookmarks|history)\/?$/.test(current.url)||args.reset===true)await navigate('https://x.com/i/bookmarks');
       await page('navigation_guard');
-      await until(async()=>{const r=await page('open_bookmarks');return r.route_evidence!=='selecting_bookmarks_tab';});
+      await until(async()=>{const r=await page('open_bookmarks');return ['bookmarks_route','selected_bookmarks_tab'].includes(r.route_evidence);});
     }else if(!/^https:\/\/(x|twitter)\.com\/i\/(bookmarks|history)\/?$/.test(current.url))throw Error('书签页位置已变化，保留进度并停止');
     // A history URL alone is insufficient: never scroll the viewing-history tab.
     if(mode==='scroll')await page('bookmarks');
     if(mode==='scroll'){await page('scroll',{direction:'down'});await sleep(700);}
-    let previous='';const result=await until(async()=>{const r=await page('bookmarks');if(!r.account||r.account!==binding.account)throw Error('书签账号不一致');if(!r.root_ids?.length&&!r.empty)return false;const signature=JSON.stringify([r.root_ids,r.posts.map(p=>p.text)]);if(signature!==previous){previous=signature;return false;}return r;});
+    let previous='';const result=await until(async()=>{const r=await page('bookmarks');if(!r.account||r.account!==binding.account)throw Error('书签账号不一致');if(r.loading||!r.root_ids?.length&&!r.empty)return false;const signature=JSON.stringify([r.root_ids,r.posts.map(p=>p.text)]);if(signature!==previous){previous=signature;return false;}return r;});
     const skip=Array.isArray(args.skip_ids)?new Set(args.skip_ids.filter(validId).slice(0,1000)):new Set();
     if(args.metadata_only!==true)await imageData(result.posts.filter(p=>!skip.has(p.id)));return result;
   }
