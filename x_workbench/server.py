@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs, unquote
 from .store import Store, Problem, ROOT, HOME, dumps
 from .engine import Engine
-from . import bookmarks
+from . import bookmarks, __version__
 
 def extension_archive():
     output=io.BytesIO()
@@ -92,7 +92,7 @@ def make_server(store=None,port=8915):
                     data,mime,name=export(engine,q.get('ids',[''])[0].split(','),q.get('format',['json'])[0])
                     return self.send(data,mime=mime,headers={'Content-Disposition':'attachment; filename="'+name+'"'})
                 if path=='/extension.zip':
-                    return self.send(extension_archive(),mime='application/zip',headers={'Content-Disposition':'attachment; filename="x-workbench-extension.zip"'})
+                    return self.send(extension_archive(),mime='application/zip',headers={'Content-Disposition':'attachment; filename="x-workbench-'+__version__+'-extension.zip"'})
                 if path.startswith('/media/'):
                     name=path.rsplit('/',1)[1]
                     if not re.fullmatch(r'[a-f0-9]{64}\.(png|jpg|gif|webp)',name): raise Problem('图片路径无效')

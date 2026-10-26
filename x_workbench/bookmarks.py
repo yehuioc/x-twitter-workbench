@@ -26,7 +26,9 @@ def create_sync(store,args):
 def validate_view(result,owner):
     if not isinstance(result,dict) or result.get('account')!=owner: raise Problem('书签账号无法核对，已保留进度')
     url=urlsplit(result.get('url',''))
-    if url.scheme!='https' or url.username or url.password or url.hostname not in ('x.com','twitter.com') or url.path.rstrip('/')!='/i/bookmarks': raise Problem('返回内容不是全部书签页')
+    path=url.path.rstrip('/')
+    history=path=='/i/history' and result.get('collection')=='bookmarks' and result.get('route_evidence')=='selected_bookmarks_tab'
+    if url.scheme!='https' or url.username or url.password or url.hostname not in ('x.com','twitter.com') or url.query or url.fragment or not (path=='/i/bookmarks' or history): raise Problem('返回内容不是全部书签页')
     ids=result.get('root_ids')
     if not isinstance(ids,list) or len(ids)>80: raise Problem('书签列表格式无效')
     for pid in ids: post_id(pid)
@@ -84,7 +86,7 @@ def sync(engine,tid,deadline):
     # Reopen once, scan continuously, then read incomplete details. No list/detail
     # round trip per bookmark. Resumption seeks the saved ID, never trusts pixels.
     current_url=urlsplit(active[0].get('url') or '')
-    warm=bool(seeking and current_url.scheme=='https' and current_url.hostname in ('x.com','twitter.com') and current_url.path.rstrip('/')=='/i/bookmarks')
+    warm=bool(seeking and current_url.scheme=='https' and current_url.hostname in ('x.com','twitter.com') and not current_url.query and current_url.path.rstrip('/') in ('/i/bookmarks','/i/history'))
     result=engine.browser('bookmarks',{'mode':'open','reset':not warm,'metadata_only':True},stopped)
     if warm and anchor not in validate_view(result,owner):
         result=engine.browser('bookmarks',{'mode':'open','reset':True,'metadata_only':True},stopped)

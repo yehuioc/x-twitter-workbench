@@ -16,7 +16,7 @@ from pathlib import Path
 from x_workbench.store import Store, ROOT, Problem
 from x_workbench.engine import Engine
 from x_workbench.server import make_server, export, extension_archive
-from x_workbench import mcp
+from x_workbench import mcp, __version__
 
 PID='9000000000000000000000001'
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
@@ -148,7 +148,7 @@ class Fixture(unittest.TestCase):
         self.store.event(t['id'],'新事件');self.assertFalse(self.engine.status(full['stamp'])['unchanged'])
     def test_old_extension_rejected_before_combined_read_and_preview_validation(self):
         self.engine.bridge.status=lambda:[{'control':True,'version':'0.1.1'}]
-        with self.assertRaisesRegex(Problem,'0.2.0'):self.engine.browser('read_post',{'id':PID})
+        with self.assertRaisesRegex(Problem,__version__):self.engine.browser('read_post',{'id':PID})
         with self.assertRaises(Problem):self.engine.dispatch('local_sources',{'keywords':'not a list'},external=True)
     def test_model_api_shape_and_image_attachment_without_paid_call(self):
         import os
@@ -210,6 +210,10 @@ class Fixture(unittest.TestCase):
             with opener.open(req,timeout=3) as r:return r.status,r.headers,r.read()
         try:
             state=json.loads(request('/api/state')[2]);csrf=state['csrf'];self.assertIn('资料工作台',request('/')[2].decode())
+            self.assertEqual(state['version'],__version__)
+            code,headers,payload=request('/extension.zip')
+            self.assertIn(__version__,headers['Content-Disposition'])
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:self.assertEqual(json.loads(archive.read('manifest.json'))['version'],state['version'])
             self.assertEqual(state['installation']['extension_dir'],str(ROOT/'extension'))
             self.assertIn(ROOT.as_posix(),state['installation']['mcp_command'])
             with self.assertRaises(urllib.error.HTTPError):request('/api/action',{'action':'pair'})
@@ -232,7 +236,10 @@ class Fixture(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(extension_archive())) as archive:
             expected={'manifest.json','background.js','buttons.js','site.js','panel.html','panel.js','panel.css','LICENSE','THIRD_PARTY_NOTICES.md'}
             self.assertEqual(set(archive.namelist()),expected)
-            self.assertEqual(json.loads(archive.read('manifest.json'))['version'],'0.3.0')
+            version=json.loads(archive.read('manifest.json'))['version']
+            self.assertEqual(version,__version__)
+            self.assertEqual(mcp.response({'jsonrpc':'2.0','id':1,'method':'initialize'},0)['result']['serverInfo']['version'],version)
+            self.assertIn('当前版本：**'+version+'**',(ROOT/'README.md').read_text(encoding='utf-8'))
             self.assertIn('Copyright (c) 2026 angiin',archive.read('THIRD_PARTY_NOTICES.md').decode())
 
 if __name__=='__main__':unittest.main()

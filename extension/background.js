@@ -63,8 +63,12 @@ async function execute(action,args={}){
     const mode=args.mode||'open';if(!['open','current','scroll'].includes(mode))throw Error('书签读取方式无效');
     const current=await check(run.session);
     if(mode==='open'){
-      if(!/^https:\/\/(x|twitter)\.com\/i\/bookmarks\/?$/.test(current.url)||args.reset===true)await navigate('https://x.com/i/bookmarks');
-    }else if(!/^https:\/\/(x|twitter)\.com\/i\/bookmarks\/?$/.test(current.url))throw Error('书签页位置已变化，保留进度并停止');
+      if(!/^https:\/\/(x|twitter)\.com\/i\/(bookmarks|history)\/?$/.test(current.url)||args.reset===true)await navigate('https://x.com/i/bookmarks');
+      await page('navigation_guard');
+      await until(async()=>{const r=await page('open_bookmarks');return r.route_evidence!=='selecting_bookmarks_tab';});
+    }else if(!/^https:\/\/(x|twitter)\.com\/i\/(bookmarks|history)\/?$/.test(current.url))throw Error('书签页位置已变化，保留进度并停止');
+    // A history URL alone is insufficient: never scroll the viewing-history tab.
+    if(mode==='scroll')await page('bookmarks');
     if(mode==='scroll'){await page('scroll',{direction:'down'});await sleep(700);}
     let previous='';const result=await until(async()=>{const r=await page('bookmarks');if(!r.account||r.account!==binding.account)throw Error('书签账号不一致');if(!r.root_ids?.length&&!r.empty)return false;const signature=JSON.stringify([r.root_ids,r.posts.map(p=>p.text)]);if(signature!==previous){previous=signature;return false;}return r;});
     const skip=Array.isArray(args.skip_ids)?new Set(args.skip_ids.filter(validId).slice(0,1000)):new Set();

@@ -1,6 +1,22 @@
 // Synthetic fixtures only: no live accounts, copied posts or captured media.
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-const {xNormalizeTweet,xHandle,xDraftState,xBookmarkView}=require('../extension/site.js');
+const {xNormalizeTweet,xHandle,xDraftState,xBookmarkView,xBookmarkContext}=require('../extension/site.js');
+
+test('history redirect requires the selected bookmarks tab and cannot save browsing history or folders',()=>{
+  let selected=false,clicks=0,label='书签';
+  const tab={get innerText(){return label;},getAttribute:k=>k==='aria-selected'&&selected?'true':'false',click:()=>{clicks++;selected=true;}};
+  const column={querySelector:()=>null,querySelectorAll:s=>s==='[role="tab"]'?[tab]:[]};
+  global.location={pathname:'/i/history',search:'',href:'https://x.com/i/history'};
+  global.document={querySelector:s=>s.includes('primaryColumn')?column:null};global.scrollY=0;
+  try{
+    assert.throws(()=>xBookmarkView(),/浏览历史/);
+    assert.equal(xBookmarkContext(true),'selecting_bookmarks_tab');assert.equal(clicks,1);
+    assert.equal(xBookmarkView().route_evidence,'selected_bookmarks_tab');
+    selected=false;label='浏览历史';assert.throws(()=>xBookmarkContext(true),/浏览历史/);assert.equal(clicks,1);
+    selected=true;label='Bookmarks';assert.equal(xBookmarkContext(),'selected_bookmarks_tab');
+    global.location.search='?folder_id=123';assert.throws(()=>xBookmarkContext(),/文件夹/);
+  }finally{delete global.location;delete global.document;delete global.scrollY;}
+});
 test('bookmarks use only the primary column, keep quotes separate, and reject other routes',()=>{
   const raw={rest_id:'9000000000000000000000001',legacy:{full_text:'收藏原文',truncated:false},quoted_status_result:{result:{rest_id:'9000000000000000000000002',legacy:{full_text:'引用上下文',truncated:false}}}};
   const article={__reactProps$test:{tweet:raw},querySelector:()=>null,querySelectorAll:s=>s==='time'?[{closest:()=>({href:'https://x.com/writer/status/'+raw.rest_id})}]:[]};

@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);let view;
 async function call(action,args={}){const r=await chrome.runtime.sendMessage({action,args});if(!r||r.error)throw Error(r?.error||'扩展后台未响应');return r.result;}
-function render(s){view=s;const b=s.binding;$('binding').textContent=b?'@'+b.account+'\n'+b.url+'\n'+(b.control?'AI 接管开启':'由你操作'): '尚未绑定';$('control').checked=!!b?.control;$('status').textContent=s.message;$('version').textContent='扩展 '+s.version+' · '+(s.connected?'本机在线':'本机待连接');for(const id of ['focus','capture','list','sync','bookmarks'])$(id).disabled=!b||s.busy;$('bind').disabled=s.busy;$('control').disabled=!b||s.busy;}
+function render(s){view=s;const b=s.binding;$('binding').textContent=b?'@'+b.account+'\n'+b.url+'\n'+(b.control?'AI 接管开启':'由你操作'): '尚未绑定';$('control').checked=!!b?.control;$('status').textContent=s.message;$('version').textContent='X 资料工作台 '+s.version+' · '+(s.connected?'本机在线':'本机待连接');for(const id of ['focus','capture','list','sync','bookmarks'])$(id).disabled=!b||s.busy;$('bind').disabled=s.busy;$('control').disabled=!b||s.busy;}
 function action(id,fn){$(id).onclick=async()=>{try{await fn();}catch(e){$('status').textContent=e.message;}};}
 action('pair',async()=>{render(await call('pair',{code:$('code').value}));$('code').value='';});
 action('bind',async()=>render(await call('bind')));action('focus',async()=>render(await call('focus')));action('stop',async()=>render(await call('stop')));

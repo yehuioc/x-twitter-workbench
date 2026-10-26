@@ -26,6 +26,13 @@ class BookmarkTests(unittest.TestCase):
         self.home=Path(tempfile.mkdtemp(dir=directory));self.store=Store(self.home);self.engine=Engine(self.store)
         self.engine.bridge.status=lambda:[{'online':True,'control':True,'account':'reader','version':'0.3.0'}]
     def tearDown(self):self.engine.close();shutil.rmtree(self.home)
+    def test_history_route_needs_explicit_selected_bookmark_evidence(self):
+        page=view(['101'])|{'url':'https://x.com/i/history'}
+        with self.assertRaises(Problem):bookmarks.save_view(self.engine,page,'reader')
+        page.update(collection='bookmarks',route_evidence='selected_bookmarks_tab')
+        self.assertEqual(bookmarks.save_view(self.engine,page,'reader')['bookmark_ids'],['101'])
+        for patch in ({'route_evidence':'viewed_history_tab'},{'url':'https://x.com/i/history?folder_id=1'},{'url':'https://x.com/i/history/folders/1'}):
+            with self.assertRaises(Problem):bookmarks.save_view(self.engine,page|patch,'reader')
     def run_sync(self,pages,**args):
         calls=[];index=0
         def browser(operation,a,cancel):

@@ -10,7 +10,7 @@ import urllib.request
 from urllib.parse import urlsplit
 from .store import Problem, dumps, post_id, sha, ROOT
 from .bridge import Bridge
-from . import bookmarks
+from . import bookmarks, __version__
 
 def schema():
     def obj(p): return {'type':'object','properties':p,'required':list(p),'additionalProperties':False}
@@ -28,7 +28,7 @@ class Engine:
             if worker is not threading.current_thread(): worker.join(timeout=3)
     def status(self,since=None):
         tasks=self.store.task_summaries(); settings=self.store.setting('provider',{'driver':'external','model':'','api_url':'','key_env':''}); stamp=sha([tasks,settings])
-        result={'connections':self.bridge.status(),'bookmarks':self.store.bookmark_status(),'stamp':stamp,'unchanged':since==stamp,'adaptation':'按当前 X 页面读取；正文、图片和线程分别记录覆盖范围'}
+        result={'version':__version__,'connections':self.bridge.status(),'bookmarks':self.store.bookmark_status(),'stamp':stamp,'unchanged':since==stamp,'adaptation':'按当前 X 页面读取；正文、图片和线程分别记录覆盖范围'}
         if since!=stamp: result.update(tasks=tasks,settings=settings)
         return result
     def save(self,result):
@@ -58,7 +58,7 @@ class Engine:
                     version=client.get('version') or ''
                     required=(0,3,0) if operation=='bookmarks' else (0,2,0)
                     if client['control'] and re.fullmatch(r'\d+\.\d+\.\d+',version) and tuple(map(int,version.split('.')))<required:
-                        raise Problem('请将 X 扩展刷新至'+'.'.join(map(str,required))+'，再重新开启接管；不用重新配对')
+                        raise Problem('请刷新至当前工作台版本 '+__version__+' 的 X 扩展，再重新开启接管；不用重新配对')
             result=self.bridge.request(operation,args,cancel,timeout=100 if operation=='read_thread' else 60)
             if operation in ('read_post','read_thread'): return self.save(result)
             return result
