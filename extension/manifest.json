@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X 资料工作台",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "minimum_chrome_version": "116",
   "description": "保存指定 X 页的原文、图片和关系，主动开启有界 AI 研究。",
   "permissions": [

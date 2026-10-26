@@ -4,7 +4,7 @@ function render(s){view=s;const b=s.binding;$('binding').textContent=b?'@'+b.acc
 function action(id,fn){$(id).onclick=async()=>{try{await fn();}catch(e){$('status').textContent=e.message;}};}
 action('pair',async()=>{render(await call('pair',{code:$('code').value}));$('code').value='';});
 action('bind',async()=>render(await call('bind')));action('focus',async()=>render(await call('focus')));action('stop',async()=>render(await call('stop')));
-$('control').onchange=async()=>{try{render(await call('control',{enabled:$('control').checked}));}catch(e){$('control').checked=!!view?.binding?.control;$('status').textContent=e.message;}};
+$('control').onchange=async()=>{const enabled=$('control').checked;$('control').checked=!!view?.binding?.control;$('control').disabled=true;$('status').textContent=enabled?'正在确认本地工作台连接…':'正在停止 AI…';try{render(await call('control',{enabled}));}catch(e){$('control').checked=!!view?.binding?.control;$('control').disabled=!!view?.busy;$('status').textContent=e.message;}};
 action('capture',async()=>{await call('capture',{thread:$('thread').checked});$('status').textContent='已保存，可在本地资料库核对覆盖说明。';});
 action('sync',async()=>{$('status').textContent='已同步 '+(await call('sync')).synced+' 条待存记录。';});
 action('bookmarks',async()=>{const r=await call('bookmarks');$('status').textContent='已保存 '+r.bookmark_ids.length+' 条已加载书签；更多内容请到工作台继续同步。';});

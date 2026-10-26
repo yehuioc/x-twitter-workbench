@@ -49,7 +49,7 @@ class Bridge:
             if previous and rev<previous['revision'] and not fresh_grant: return {'stale':True}
             stopped=grant<=self.stop_at
             c={k:b.get(k) for k in ('session','tab_id','account','url','revision','grant_at','version')}
-            c.update(key=key,client_id=client_id,last_grant=max(last_grant,grant),seen=time.monotonic(),control=b.get('control') is True and not stopped,busy=body.get('busy') is True)
+            c.update(key=key,client_id=client_id,last_grant=max(last_grant,grant),seen=time.monotonic(),control=b.get('control') is True and not stopped,busy=body.get('busy') is True,message=str(body.get('message') or '')[:500])
             self.clients[client_id]=c
             for cmd in self.commands.values():
                 if cmd['client_id']==client_id and (not c['control'] or cmd['session']!=c['session']): cmd['error']='用户停止或重新绑定'

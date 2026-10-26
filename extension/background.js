@@ -1,16 +1,17 @@
 const BASE='http://127.0.0.1:8915',panels=new Set();
 const adapters=new Set(),mediaCache=new Map();let mediaCacheBytes=0;
-let token='',binding=null,active=null,timer,ticking=false,initialized,message='请在工作台生成配对码。',connected=false,lastTick=0,writes=Promise.resolve();
+let token='',binding=null,active=null,controlPending=null,timer,ticking=false,initialized,message='请在工作台生成配对码。',connected=false,lastTick=0,writes=Promise.resolve();
 const allowed=u=>{try{return ['x.com','twitter.com'].includes(new URL(u).hostname)&&new URL(u).protocol==='https:';}catch(_){return false;}};
 const validId=id=>typeof id==='string'&&/^\d{1,25}$/.test(id);
 chrome.sidePanel.setPanelBehavior({openPanelOnActionClick:true});
-function state(){return {paired:!!token,binding,busy:!!active,message,connected,version:chrome.runtime.getManifest().version};}
+function state(){return {paired:!!token,binding,busy:!!active||!!controlPending,message,connected,version:chrome.runtime.getManifest().version};}
 function show(){for(const p of panels)try{p.postMessage(state());}catch(_){panels.delete(p);}}
 function persist(){const value={binding,flight:active?{id:active.id,remote:active.remote,session:active.session}:null};writes=writes.catch(()=>{}).then(()=>chrome.storage.session.set({runner:value}));return writes;}
-async function post(path,body){const r=await fetch(BASE+path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});const data=await r.json();if(!r.ok)throw Error(data.error||'本机服务未连接');return data.result;}
+async function post(path,body){let r;try{r=await fetch(BASE+path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});}catch(e){throw Error('无法连接本地工作台（127.0.0.1:8915），请先启动服务。');}const data=await r.json();if(!r.ok)throw Error(data.error||'本机服务未连接');return data.result;}
 async function init(){if(initialized)return initialized;initialized=(async()=>{token=(await chrome.storage.local.get('token')).token||'';const saved=(await chrome.storage.session.get('runner')).runner;if(saved?.binding){binding={...saved.binding,instance:saved.binding.instance||crypto.randomUUID(),version:chrome.runtime.getManifest().version};if(saved.flight)stop('上次动作中断，未重放；核对页面后重新开启');else if(binding.control)try{await check(binding.session);await identity();}catch(e){stop(e.message);}}schedule(0);return state();})();return initialized;}
 function schedule(ms=binding?.control?1500:5000){clearTimeout(timer);if(binding&&token&&(binding.control||panels.size))timer=setTimeout(tick,ms);}
 function stop(reason='AI 已停止，交还给你操作。'){
+  if(controlPending)controlPending.cancelled=true;
   if(active){active.cancelled=true;active.stopReason=reason;active.abort.abort();}
   if(binding){const old=binding;binding={...binding,control:false,grant_at:0,session:crypto.randomUUID(),revision:binding.revision+1};if(typeof old.autoDiscardable==='boolean')chrome.tabs.update(old.tab_id,{autoDiscardable:old.autoDiscardable}).catch(()=>{});}
   message=reason;chrome.alarms.clear('xwb-wake');persist();show();schedule(0);
@@ -109,8 +110,32 @@ async function job(action,args,command,task){if(active)throw Error('页面正在
   finally{clearTimeout(j.timeout);if(command)try{await post('/bridge/result',{id:j.id,session:j.session,result:error?null:result,error});}catch(e){message=e.message;}active=null;await persist();show();schedule(0);}
   if(error)throw Error(error);return result;
 }
-async function tick(){if(ticking)return;ticking=true;try{if(!binding||!token)return;if(binding.control&&lastTick&&Date.now()-lastTick>20000)stop('浏览器或电脑运行中断，请核对后重新开启');lastTick=Date.now();await check(binding.session);const sent=binding.session;const command=await post('/bridge/poll',{binding:{...binding},busy:!!active,executing:active?.remote?active.id:null});connected=true;if(sent!==binding.session)return;if(command?.stop)stop('本机工作台已停止旧授权，请主动重新开启');else if(command?.cancel&&active?.id===command.cancel)stop('当前任务已取消');else if(command?.id&&!active&&binding.control){if(command.session!==binding.session||Date.now()/1000>=command.expires)return;job(command.action,command.args,command).catch(()=>{});}}
-  catch(e){connected=false;if(binding?.control)stop('本机连接中断，接管已暂停');else message='本机连接待确认：'+e.message;}finally{ticking=false;show();schedule();}}
+async function tick(){if(ticking)return;ticking=true;const session=binding?.session;try{if(!binding||!token||controlPending)return;if(binding.control&&lastTick&&Date.now()-lastTick>20000)stop('浏览器或电脑运行中断，请核对后重新开启');lastTick=Date.now();await check(binding.session);const sent=binding.session;const command=await post('/bridge/poll',{binding:{...binding},message,busy:!!active,executing:active?.remote?active.id:null});if(sent!==binding.session)return;connected=true;if(command?.stop)stop('本机工作台已停止旧授权，请主动重新开启');else if(command?.cancel&&active?.id===command.cancel)stop('当前任务已取消');else if(command?.id&&!active&&binding.control){if(command.session!==binding.session||Date.now()/1000>=command.expires)return;job(command.action,command.args,command).catch(()=>{});}}
+  catch(e){if(session!==binding?.session)return;connected=false;if(binding?.control)stop('本机连接中断，接管已暂停：'+e.message);else message='本机连接待确认：'+e.message;}finally{ticking=false;show();schedule();}}
+
+async function enableControl(){
+  if(active||controlPending)throw Error('请等待当前动作结束');
+  const attempt={session:binding.session};controlPending=attempt;message='正在确认本地工作台连接…';show();
+  let candidate,confirmed=false;
+  try{
+    await identity();await check(attempt.session);
+    candidate={...binding,control:true,grant_at:Date.now()/1000,session:crypto.randomUUID(),revision:binding.revision+1};
+    await chrome.tabs.update(binding.tab_id,{autoDiscardable:false});
+    const result=await post('/bridge/poll',{binding:candidate,busy:true,message:'正在开启 AI 接管'});confirmed=true;
+    if(result?.stop||result?.stale)throw Error('工作台未接受本次授权，请重新开启');
+    await check(attempt.session);if(attempt.cancelled)throw Error('操作已停止');
+    binding=candidate;connected=true;lastTick=Date.now();await persist();
+    await chrome.alarms.create('xwb-wake',{periodInMinutes:1});
+    message='AI 接管开启；切页、最小化或关闭侧栏仍由后台执行。';
+  }catch(e){
+    if(!attempt.cancelled)stop('开启 AI 失败：'+e.message);
+    if(!confirmed)connected=false;
+    await persist();
+    if(confirmed&&binding)await post('/bridge/poll',{binding,busy:false,message}).catch(()=>{});
+    throw Error(message);
+  }finally{controlPending=null;show();schedule(0);}
+  return state();
+}
 async function capture(id,thread=false){
   if(!validId(id))throw Error('请先打开帖子或从列表选择');if(binding.control)throw Error('AI 正在接管，请先停止再手动保存');
   return job('manual_capture',{},null,async()=>{
@@ -126,7 +151,7 @@ async function handle(action,args={}){await init();if(action==='state')return st
   if(action==='pair'){if(active)throw Error('请先结束当前动作');stop();token=(await post('/bridge/pair',{code:String(args.code||'').trim().toUpperCase()})).token;await chrome.storage.local.set({token});message='已配对，请绑定当前 X 标签页。';show();return state();}
   if(action==='bind'){if(active)throw Error('请先结束当前动作');stop();const [t]=await chrome.tabs.query({active:true,currentWindow:true});if(!allowed(t?.url))throw Error('请选中登录后的 X 页面');binding={instance:binding?.instance||crypto.randomUUID(),tab_id:t.id,session:crypto.randomUUID(),revision:(binding?.revision||0)+1,account:'',control:false,grant_at:0,url:t.url,autoDiscardable:t.autoDiscardable,version:chrome.runtime.getManifest().version};try{binding.account=(await page('identity')).account;}catch(e){binding=null;await persist();throw e;}await chrome.scripting.executeScript({target:{tabId:t.id},files:['buttons.js']});await persist();message='绑定成功，可手动保存；AI 接管默认关闭。';schedule(0);show();return state();}
   if(!binding)throw Error('请先绑定 X 页面');
-  if(action==='control'){if(!args.enabled)return handle('stop');if(active)throw Error('请等待当前动作结束');await identity();binding={...binding,control:true,grant_at:Date.now()/1000,session:crypto.randomUUID(),revision:binding.revision+1};lastTick=Date.now();await chrome.tabs.update(binding.tab_id,{autoDiscardable:false});await persist();await chrome.alarms.create('xwb-wake',{periodInMinutes:1});message='AI 接管开启；切页、最小化或关闭侧栏仍由后台执行。';schedule(0);show();return state();}
+  if(action==='control'){if(!args.enabled)return handle('stop');return enableControl();}
   if(action==='focus'){const t=await chrome.tabs.get(binding.tab_id);await chrome.tabs.update(t.id,{active:true});await chrome.windows.update(t.windowId,{focused:true});return state();}
   if(action==='list')return job('snapshot',{});
   if(action==='bookmarks'){
